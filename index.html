@@ -221,6 +221,17 @@
   .btn-block{width:100%;}
   .btn-sm{padding:.4rem .7rem; font-size:.8rem;}
 
+  /* ---------- loading spinner (shown on buttons while waiting on the server) ---------- */
+  .btn-spinner{
+    display:inline-block; width:14px; height:14px; margin-right:.55rem; vertical-align:-2px;
+    border:2px solid rgba(127,127,127,.3); border-top-color:currentColor; border-radius:50%;
+    animation:btnSpin .7s linear infinite;
+  }
+  .btn-spinner.no-margin{margin-right:0;}
+  @keyframes btnSpin{ to{ transform:rotate(360deg); } }
+  button.is-loading{cursor:wait;}
+  .switch.is-loading{opacity:.55; cursor:wait;}
+
   .field{display:flex; flex-direction:column; gap:.35rem; text-align:left;}
   .field label{font-size:.78rem; font-weight:700; color:var(--slate);}
   .field input, .field select{
@@ -590,6 +601,26 @@
     return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+ICON[name]+'</svg>';
   }
 
+  /* ================= button loading state ================= */
+  // Shows a small spinning circle (and optional "Please wait…" text) on a button while
+  // it's waiting on a server call, then restores the button's original contents.
+  // waitText: string to show next to the spinner, false to show only the spinner (for
+  // small icon-only buttons where there's no room for text).
+  function setBtnLoading(btn, loading, waitText){
+    if(!btn) return;
+    if(loading){
+      if(btn.dataset.origHtml===undefined) btn.dataset.origHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.classList.add('is-loading');
+      var spinner = '<span class="btn-spinner'+(waitText===false?' no-margin':'')+'"></span>';
+      btn.innerHTML = spinner + (waitText===false ? '' : '<span>'+escapeHtml(typeof waitText==='string'?waitText:'Please wait…')+'</span>');
+    } else {
+      btn.disabled = false;
+      btn.classList.remove('is-loading');
+      if(btn.dataset.origHtml!==undefined){ btn.innerHTML = btn.dataset.origHtml; delete btn.dataset.origHtml; }
+    }
+  }
+
   /* ================= state ================= */
   var state = {
     mode:null, // 'signin' | 'employee' | 'admin'
@@ -669,13 +700,13 @@
       var username = document.getElementById('siUsername').value.trim();
       state.signinUsername = username;
       var errEl = document.getElementById('siErr'); errEl.textContent='';
-      var btn = document.getElementById('siContinueBtn'); btn.disabled=true;
+      var btn = document.getElementById('siContinueBtn'); setBtnLoading(btn, true);
       try{
         var emp = await runServer('findEmployeeByUsername',[username]);
         state.signinEmp = emp; state.signinStep='password'; state.signinError='';
         render();
       } catch(err){
-        btn.disabled=false;
+        setBtnLoading(btn, false);
         state.signinError = (err && err.message) ? err.message : 'Something went wrong, try again.';
         render();
       }
@@ -691,7 +722,7 @@
         var pw2 = document.getElementById('siPw2').value;
         if(pw1!==pw2){ errEl.textContent='Passwords do not match'; return; }
       }
-      var btn = e.target.querySelector('button[type=submit]'); btn.disabled=true;
+      var btn = e.target.querySelector('button[type=submit]'); setBtnLoading(btn, true);
       try{
         var res = creating ? await runServer('createPassword',[emp.id, pw1]) : await runServer('login',[emp.id, pw1]);
         saveEmpSession(res.token);
@@ -700,7 +731,7 @@
         await refreshMyStatus(); await refreshMySummary();
         render(); startEmployeeTicker();
       } catch(err){
-        btn.disabled=false;
+        setBtnLoading(btn, false);
         if(err && err.message==='NO_PASSWORD'){ state.signinError='No password set yet — go back and try again.'; }
         else state.signinError = (err && err.message) ? err.message : 'Something went wrong, try again.';
         render();
@@ -712,7 +743,7 @@
   async function openAdminLoginModal(){
     var overlay = document.createElement('div');
     overlay.className='overlay'; overlay.id='adminOverlay';
-    overlay.innerHTML = '<div class="card-modal"><h2 style="font-size:1.2rem; font-weight:800;">Loading…</h2></div>';
+    overlay.innerHTML = '<div class="card-modal"><h2 style="font-size:1.2rem; font-weight:800; display:flex; align-items:center;"><span class="btn-spinner" style="width:16px; height:16px;"></span>Please wait…</h2></div>';
     document.body.appendChild(overlay);
     var box = overlay.querySelector('.card-modal');
     var passwordSet=null;
@@ -741,7 +772,7 @@
         var pw2=document.getElementById('adPw2').value;
         if(pw1!==pw2){ errEl.textContent='Passwords do not match'; return; }
       }
-      var btn=e.target.querySelector('button[type=submit]'); btn.disabled=true;
+      var btn=e.target.querySelector('button[type=submit]'); setBtnLoading(btn, true);
       try{
         if(creating) await runServer('setAdminPassword',[pw1]);
         var token = await runServer('adminLogin',[pw1]);
@@ -749,7 +780,7 @@
         overlay.remove();
         await enterAdminMode();
       } catch(err){
-        btn.disabled=false;
+        setBtnLoading(btn, false);
         errEl.textContent = (err && err.message) ? err.message : 'Something went wrong, try again.';
       }
     });
@@ -860,14 +891,14 @@
   function wireMyEvents(){
     var clockBtn = document.getElementById('clockBtn');
     if(clockBtn) clockBtn.addEventListener('click', async function(){
-      clockBtn.disabled=true;
+      setBtnLoading(clockBtn, true, false);
       try{
         if(state.myStatus.activeShift) state.myStatus = await runServer('clockOut',[state.empToken]);
         else state.myStatus = await runServer('clockIn',[state.empToken]);
         await refreshMySummary();
         if(state.myHistory) await refreshMyHistory();
         render();
-      } catch(err){ handleAuthError(err,'employee'); alert((err&&err.message)||'Something went wrong'); clockBtn.disabled=false; }
+      } catch(err){ handleAuthError(err,'employee'); alert((err&&err.message)||'Something went wrong'); setBtnLoading(clockBtn, false); }
     });
     var taskForm = document.getElementById('taskForm');
     if(taskForm) taskForm.addEventListener('submit', async function(e){
@@ -875,9 +906,9 @@
       var desc = document.getElementById('taskDesc').value.trim();
       var mins = document.getElementById('taskMins').value;
       var errEl = document.getElementById('taskErr'); errEl.textContent='';
-      var btn = taskForm.querySelector('button[type=submit]'); btn.disabled=true;
+      var btn = taskForm.querySelector('button[type=submit]'); setBtnLoading(btn, true, false);
       try{ state.myStatus = await runServer('addTask',[state.empToken, desc, mins]); render(); }
-      catch(err){ btn.disabled=false; errEl.textContent=(err&&err.message)||'Could not add task'; }
+      catch(err){ setBtnLoading(btn, false); errEl.textContent=(err&&err.message)||'Could not add task'; }
     });
     root.querySelectorAll('[data-edit-task]').forEach(function(b){ b.addEventListener('click', function(){ state.editingTaskId=b.getAttribute('data-edit-task'); render(); }); });
     root.querySelectorAll('[data-cancel-task]').forEach(function(b){ b.addEventListener('click', function(){ state.editingTaskId=null; render(); }); });
@@ -885,23 +916,25 @@
       var id = b.getAttribute('data-save-task');
       var desc = document.getElementById('editDesc_'+id).value.trim();
       var mins = document.getElementById('editMins_'+id).value;
+      setBtnLoading(b, true, false);
       try{
         await runServer('updateTask',[state.empToken, id, desc, mins]);
         state.editingTaskId=null;
         await refreshMyStatus();
         if(state.myHistory) await refreshMyHistory();
         render();
-      } catch(err){ handleAuthError(err,'employee'); alert((err&&err.message)||'Could not save'); }
+      } catch(err){ setBtnLoading(b, false); handleAuthError(err,'employee'); alert((err&&err.message)||'Could not save'); }
     }); });
     root.querySelectorAll('[data-del-task]').forEach(function(b){ b.addEventListener('click', async function(){
       var id = b.getAttribute('data-del-task');
       if(!confirm('Delete this task?')) return;
+      setBtnLoading(b, true, false);
       try{
         await runServer('deleteTask',[state.empToken, id]);
         await refreshMyStatus();
         if(state.myHistory) await refreshMyHistory();
         render();
-      } catch(err){ handleAuthError(err,'employee'); alert((err&&err.message)||'Could not delete'); }
+      } catch(err){ setBtnLoading(b, false); handleAuthError(err,'employee'); alert((err&&err.message)||'Could not delete'); }
     }); });
     root.querySelectorAll('[data-edit-shift]').forEach(function(b){ b.addEventListener('click', function(){ state.editingShiftId=b.getAttribute('data-edit-shift'); render(); }); });
     root.querySelectorAll('[data-cancel-shift]').forEach(function(b){ b.addEventListener('click', function(){ state.editingShiftId=null; render(); }); });
@@ -909,12 +942,13 @@
       var id = b.getAttribute('data-save-shift');
       var inVal = document.getElementById('shiftIn_'+id).value;
       var outVal = document.getElementById('shiftOut_'+id).value;
+      setBtnLoading(b, true, false);
       try{
         await runServer('updateShiftTimes',[state.empToken, id, inVal?new Date(inVal).toISOString():null, outVal?new Date(outVal).toISOString():null]);
         state.editingShiftId=null;
         await refreshMyHistory();
         render();
-      } catch(err){ handleAuthError(err,'employee'); alert((err&&err.message)||'Could not save'); }
+      } catch(err){ setBtnLoading(b, false); handleAuthError(err,'employee'); alert((err&&err.message)||'Could not save'); }
     }); });
   }
   var empTickerId=null;
@@ -1157,13 +1191,15 @@
     document.getElementById('admShiftCancel').addEventListener('click', function(){ overlay.remove(); });
     overlay.addEventListener('click', function(e){ if(e.target===overlay) overlay.remove(); });
     document.getElementById('admShiftSave').addEventListener('click', async function(){
+      var saveBtn = document.getElementById('admShiftSave');
       var inVal=document.getElementById('admIn').value, outVal=document.getElementById('admOut').value;
       var errEl=document.getElementById('admShiftErr'); errEl.textContent='';
+      setBtnLoading(saveBtn, true);
       try{
         await runServer('adminUpdateShift',[state.adminToken, shift.id, inVal?new Date(inVal).toISOString():null, outVal?new Date(outVal).toISOString():null]);
         overlay.remove();
         await refreshLogs(); render();
-      } catch(err){ handleAuthError(err,'admin'); errEl.textContent=(err&&err.message)||'Could not save'; }
+      } catch(err){ setBtnLoading(saveBtn, false); handleAuthError(err,'admin'); errEl.textContent=(err&&err.message)||'Could not save'; }
     });
   }
   function adminTaskRowHtml(t){
@@ -1182,22 +1218,24 @@
       var id=b.getAttribute('data-adm-save-task');
       var desc=document.getElementById('admEditDesc_'+id).value.trim();
       var mins=document.getElementById('admEditMins_'+id).value;
+      setBtnLoading(b, true, false);
       try{
         await runServer('adminUpdateTask',[state.adminToken, id, desc, mins]);
         var t = shift.tasks.find(function(x){return x.id===id;}); if(t){ t.description=desc; t.minutes=Number(mins); }
         state.editingTaskId=null; rerender();
         await refreshLogs();
-      } catch(err){ handleAuthError(err,'admin'); alert((err&&err.message)||'Could not save'); }
+      } catch(err){ setBtnLoading(b, false); handleAuthError(err,'admin'); alert((err&&err.message)||'Could not save'); }
     }); });
     document.querySelectorAll('[data-adm-del-task]').forEach(function(b){ b.addEventListener('click', async function(){
       var id=b.getAttribute('data-adm-del-task');
       if(!confirm('Delete this task?')) return;
+      setBtnLoading(b, true, false);
       try{
         await runServer('adminDeleteTask',[state.adminToken, id]);
         shift.tasks = shift.tasks.filter(function(x){return x.id!==id;});
         rerender();
         await refreshLogs();
-      } catch(err){ handleAuthError(err,'admin'); alert((err&&err.message)||'Could not delete'); }
+      } catch(err){ setBtnLoading(b, false); handleAuthError(err,'admin'); alert((err&&err.message)||'Could not delete'); }
     }); });
   }
   function exportLogsCsv(){
@@ -1242,8 +1280,9 @@
       root.querySelectorAll('[data-del-adm-shift]').forEach(function(b){ b.addEventListener('click', async function(){
         var id=b.getAttribute('data-del-adm-shift');
         if(!confirm('Delete this entire shift and its tasks?')) return;
+        setBtnLoading(b, true, false);
         try{ await runServer('adminDeleteShift',[state.adminToken, id]); await refreshLogs(); render(); }
-        catch(err){ handleAuthError(err,'admin'); alert((err&&err.message)||'Could not delete'); }
+        catch(err){ setBtnLoading(b, false); handleAuthError(err,'admin'); alert((err&&err.message)||'Could not delete'); }
       }); });
     }
     if(state.adminPage==='reports'){
@@ -1261,8 +1300,9 @@
         e.preventDefault();
         var name=document.getElementById('newEmpName').value.trim();
         if(!name) return;
+        var addBtn = e.target.querySelector('button[type=submit]'); setBtnLoading(addBtn, true, false);
         try{ await runServer('addEmployee',[state.adminToken, name, state.newEmpLocation]); document.getElementById('newEmpName').value=''; await refreshTeam(); render(); }
-        catch(err){ handleAuthError(err,'admin'); alert((err&&err.message)||'Could not add employee'); }
+        catch(err){ setBtnLoading(addBtn, false); handleAuthError(err,'admin'); alert((err&&err.message)||'Could not add employee'); }
       });
       root.querySelectorAll('[data-newloc]').forEach(function(b){ b.addEventListener('click', function(){ state.newEmpLocation=b.getAttribute('data-newloc'); render(); }); });
       root.querySelectorAll('[data-edit-username]').forEach(function(b){ b.addEventListener('click', function(){ state.editingUsernameId=b.getAttribute('data-edit-username'); render(); }); });
@@ -1270,33 +1310,38 @@
       root.querySelectorAll('[data-save-username]').forEach(function(b){ b.addEventListener('click', async function(){
         var id=b.getAttribute('data-save-username');
         var val=document.getElementById('editUsername_'+id).value.trim();
+        setBtnLoading(b, true, false);
         try{ await runServer('setEmployeeUsername',[state.adminToken, id, val]); state.editingUsernameId=null; await refreshTeam(); render(); }
-        catch(err){ handleAuthError(err,'admin'); alert((err&&err.message)||'Could not update username'); }
+        catch(err){ setBtnLoading(b, false); handleAuthError(err,'admin'); alert((err&&err.message)||'Could not update username'); }
       }); });
       root.querySelectorAll('[data-toggle-active]').forEach(function(b){ b.addEventListener('click', async function(){
         var id=b.getAttribute('data-toggle-active');
         var emp = state.teamRows.find(function(x){return x.id===id;});
+        b.disabled=true; b.classList.add('is-loading');
         try{ await runServer('setEmployeeActive',[state.adminToken, id, !emp.active]); await refreshTeam(); render(); }
-        catch(err){ handleAuthError(err,'admin'); }
+        catch(err){ b.disabled=false; b.classList.remove('is-loading'); handleAuthError(err,'admin'); }
       }); });
       root.querySelectorAll('[data-setloc]').forEach(function(b){ b.addEventListener('click', async function(){
         var parts=b.getAttribute('data-setloc').split('|');
+        var group = b.parentElement; if(group) group.querySelectorAll('button').forEach(function(x){ x.disabled=true; });
         try{ await runServer('setEmployeeLocation',[state.adminToken, parts[0], parts[1]]); await refreshTeam(); render(); }
-        catch(err){ handleAuthError(err,'admin'); }
+        catch(err){ if(group) group.querySelectorAll('button').forEach(function(x){ x.disabled=false; }); handleAuthError(err,'admin'); }
       }); });
       root.querySelectorAll('[data-del-emp]').forEach(function(b){ b.addEventListener('click', function(){ state.empDeleteConfirmId=b.getAttribute('data-del-emp'); render(); }); });
       root.querySelectorAll('[data-del-emp-no]').forEach(function(b){ b.addEventListener('click', function(){ state.empDeleteConfirmId=null; render(); }); });
       root.querySelectorAll('[data-del-emp-yes]').forEach(function(b){ b.addEventListener('click', async function(){
         var id=b.getAttribute('data-del-emp-yes');
+        setBtnLoading(b, true, false);
         try{ await runServer('deleteEmployee',[state.adminToken, id]); state.empDeleteConfirmId=null; await refreshTeam(); render(); }
-        catch(err){ handleAuthError(err,'admin'); }
+        catch(err){ setBtnLoading(b, false); handleAuthError(err,'admin'); }
       }); });
       root.querySelectorAll('[data-pwreset]').forEach(function(b){ b.addEventListener('click', function(){ state.pwResetConfirmId=b.getAttribute('data-pwreset'); render(); }); });
       root.querySelectorAll('[data-pwreset-no]').forEach(function(b){ b.addEventListener('click', function(){ state.pwResetConfirmId=null; render(); }); });
       root.querySelectorAll('[data-pwreset-yes]').forEach(function(b){ b.addEventListener('click', async function(){
         var id=b.getAttribute('data-pwreset-yes');
+        setBtnLoading(b, true, false);
         try{ await runServer('forcePasswordReset',[state.adminToken, id]); state.pwResetConfirmId=null; await refreshTeam(); render(); }
-        catch(err){ handleAuthError(err,'admin'); }
+        catch(err){ setBtnLoading(b, false); handleAuthError(err,'admin'); }
       }); });
     }
     if(state.adminPage==='settings'){
@@ -1307,8 +1352,9 @@
         var n2=document.getElementById('newAdminPw2').value;
         var errEl=document.getElementById('chAdminPwErr'); errEl.textContent=''; state.settingsMsg='';
         if(n1!==n2){ errEl.textContent='New passwords do not match'; return; }
+        var pwBtn = e.target.querySelector('button[type=submit]'); setBtnLoading(pwBtn, true);
         try{ await runServer('changeAdminPassword',[state.adminToken, cur, n1]); state.settingsMsg='Password updated.'; render(); }
-        catch(err){ handleAuthError(err,'admin'); errEl.textContent=(err&&err.message)||'Could not update password'; }
+        catch(err){ setBtnLoading(pwBtn, false); handleAuthError(err,'admin'); errEl.textContent=(err&&err.message)||'Could not update password'; }
       });
     }
   }
