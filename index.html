@@ -512,7 +512,7 @@
     // a fixed window so the retry logic below always gets a chance to run.
     var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
     var timedOut = false;
-    var timeoutId = controller ? setTimeout(function(){ timedOut = true; controller.abort(); }, 12000) : null;
+    var timeoutId = controller ? setTimeout(function(){ timedOut = true; controller.abort(); }, 20000) : null;
     return fetch(API_URL, {
       method: 'POST',
       // text/plain avoids a CORS preflight against Apps Script (which can't answer one);
@@ -1379,6 +1379,11 @@
 
   /* ================= boot ================= */
   async function boot(){
+    // Google's Apps Script backend can be noticeably slower on its very first call after
+    // sitting idle (a "cold start"). Fire a harmless, lightweight call the moment the page
+    // loads so the backend is already warm by the time the person finishes typing their
+    // username and password — this runs in the background and any failure is ignored.
+    runServer('isAdminPasswordSet', []).catch(function(){});
     var savedEmp = getSavedEmp();
     if(savedEmp && savedEmp.token){
       state.empToken = savedEmp.token;
