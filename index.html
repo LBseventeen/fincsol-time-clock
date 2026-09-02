@@ -506,14 +506,23 @@
 
   function runServer(fnName, args, _attempt){
     var attempt = _attempt || 1;
+    // Plain fetch() has no built-in timeout — on a flaky mobile connection the request
+    // can stall with no response and no error, which would leave the caller (and any
+    // "Please wait…" button) hanging forever. AbortController forces it to give up after
+    // a fixed window so the retry logic below always gets a chance to run.
+    var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timedOut = false;
+    var timeoutId = controller ? setTimeout(function(){ timedOut = true; controller.abort(); }, 12000) : null;
     return fetch(API_URL, {
       method: 'POST',
       // text/plain avoids a CORS preflight against Apps Script (which can't answer one);
       // the body is still JSON — the server just reads it as raw text and parses it.
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ fn: fnName, args: args || [] })
+      body: JSON.stringify({ fn: fnName, args: args || [] }),
+      signal: controller ? controller.signal : undefined
     })
     .then(function(res){
+      if(timeoutId) clearTimeout(timeoutId);
       if(!res.ok) throw new Error('Network error (' + res.status + ')');
       return res.json();
     })
@@ -522,20 +531,23 @@
       return data.result;
     })
     .catch(function(err){
+      if(timeoutId) clearTimeout(timeoutId);
       // Apps Script's /exec endpoint occasionally answers a request with a transient
-      // network-level failure (a bad status code, or the fetch itself failing) rather
+      // network-level failure (a bad status code, the fetch itself failing, or — on a
+      // weak connection — never answering at all, caught by the timeout above) rather
       // than a real application error — this is a known Apps Script quirk, not
       // something wrong with the request. Retry those a couple of times with a short
       // backoff before giving up. A genuine app error (e.g. "Username not found",
       // thrown above from a clean JSON response) is never retried — it's surfaced
       // immediately since retrying wouldn't change the answer.
       var msg = (err && err.message) || '';
-      var isTransient = /Network error|Failed to fetch|NetworkError|Load failed|timeout/i.test(msg);
+      var isAbortTimeout = timedOut || (err && err.name === 'AbortError');
+      var isTransient = isAbortTimeout || /Network error|Failed to fetch|NetworkError|Load failed|timeout/i.test(msg);
       if(isTransient && attempt < 3){
         return new Promise(function(resolve){ setTimeout(resolve, attempt * 700); })
           .then(function(){ return runServer(fnName, args, attempt + 1); });
       }
-      throw err;
+      throw isAbortTimeout ? new Error('The connection is taking too long. Check your signal and try again.') : err;
     });
   }
 
