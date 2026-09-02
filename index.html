@@ -493,7 +493,8 @@
   /* ================= server bridge ================= */
   var API_URL = 'https://script.google.com/macros/s/AKfycbz8ZVrgwCHpfSVUXWeN1B4DDdVYMzeUoy42FN57HWNWc0ezhHpcC-jtxqYMY-dlkt87/exec';
 
-  function runServer(fnName, args){
+  function runServer(fnName, args, _attempt){
+    var attempt = _attempt || 1;
     return fetch(API_URL, {
       method: 'POST',
       // text/plain avoids a CORS preflight against Apps Script (which can't answer one);
@@ -508,6 +509,22 @@
     .then(function(data){
       if(!data || data.ok !== true) throw new Error((data && data.error) || 'Server error');
       return data.result;
+    })
+    .catch(function(err){
+      // Apps Script's /exec endpoint occasionally answers a request with a transient
+      // network-level failure (a bad status code, or the fetch itself failing) rather
+      // than a real application error — this is a known Apps Script quirk, not
+      // something wrong with the request. Retry those a couple of times with a short
+      // backoff before giving up. A genuine app error (e.g. "Username not found",
+      // thrown above from a clean JSON response) is never retried — it's surfaced
+      // immediately since retrying wouldn't change the answer.
+      var msg = (err && err.message) || '';
+      var isTransient = /Network error|Failed to fetch|NetworkError|Load failed|timeout/i.test(msg);
+      if(isTransient && attempt < 3){
+        return new Promise(function(resolve){ setTimeout(resolve, attempt * 700); })
+          .then(function(){ return runServer(fnName, args, attempt + 1); });
+      }
+      throw err;
     });
   }
 
