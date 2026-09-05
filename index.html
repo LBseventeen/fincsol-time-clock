@@ -245,6 +245,7 @@
   .panel + .panel{margin-top:1.2rem;}
   .panel-head{display:flex; align-items:center; justify-content:space-between; gap:.8rem; flex-wrap:wrap;}
   .panel-head h2{font-size:1.05rem; font-weight:800;}
+  .panel-head h2.working-on-title{color:#fff;}
 
   .stat-row{display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:1rem; margin-bottom:0;}
   .stat-tile{background:var(--surface); border-radius:18px; box-shadow:var(--shadow); padding:1.1rem 1.25rem;}
@@ -578,6 +579,11 @@
     var h=Math.floor(mins/60), m=mins%60;
     return h+'h '+pad2(m)+'m';
   }
+  function minutesText(mins){
+    mins = Math.max(0, Math.round(Number(mins)||0));
+    var h=Math.floor(mins/60), m=mins%60;
+    return h+'h '+pad2(m)+'m';
+  }
   function downloadCsv(rows, filename){
     var csv = rows.map(function(r){ return r.map(csvEscape).join(','); }).join('\n');
     var blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
@@ -840,10 +846,9 @@
     }
     html += statRowHtml(state.mySummary);
     if(shift){
-      html += '<div class="panel" style="width:100%;"><div class="panel-head"><h2>What are you working on?</h2></div>'+
+      html += '<div class="panel" style="width:100%;"><div class="panel-head"><h2 class="working-on-title">What are you working on?</h2></div>'+
         '<form class="add-task-form" id="taskForm"><div class="field"><label>Task</label><input type="text" id="taskDesc" placeholder="e.g. Etsy Listing" required></div>'+
-        '<div class="field mins"><label>Minutes</label><input type="number" id="taskMins" min="1" max="1440" placeholder="30" required></div>'+
-        '<button class="btn btn-primary" type="submit">'+icon('plus',16)+'</button></form>'+
+        '<button class="btn btn-primary" type="submit">Add</button></form>'+
         '<div class="field-error" id="taskErr"></div>';
       var tasks = shift.tasks||[];
       if(tasks.length){
@@ -867,10 +872,12 @@
   function taskRowHtml(t, editable){
     if(state.editingTaskId===t.id){
       return '<div class="task-row"><input type="text" id="editDesc_'+t.id+'" value="'+escapeHtml(t.description)+'" style="flex:1; border:1px solid var(--line); border-radius:8px; padding:.4rem .6rem; background:var(--surface);">'+
-        '<input type="number" min="1" max="1440" id="editMins_'+t.id+'" value="'+t.minutes+'" style="width:70px; border:1px solid var(--line); border-radius:8px; padding:.4rem .5rem; background:var(--surface);">'+
         '<div class="row-actions"><button class="row-icon-btn" data-save-task="'+t.id+'">'+icon('check',16)+'</button><button class="row-icon-btn" data-cancel-task="1">'+icon('arrowLeft',16)+'</button></div></div>';
     }
-    return '<div class="task-row"><div class="desc">'+escapeHtml(t.description)+'</div><div class="mins">'+t.minutes+' min</div>'+
+    var durHtml = t.ongoing
+      ? '<div class="mins" id="taskDur_'+t.id+'" data-start="'+t.startTs+'">'+elapsedText(t.startTs)+' · ongoing</div>'
+      : '<div class="mins">'+minutesText(t.minutes)+'</div>';
+    return '<div class="task-row"><div class="desc">'+escapeHtml(t.description)+'</div>'+durHtml+
       (editable? '<div class="row-actions"><button class="row-icon-btn" data-edit-task="'+t.id+'">'+icon('pencil',15)+'</button><button class="row-icon-btn" data-del-task="'+t.id+'">'+icon('trash',15)+'</button></div>' : '<div class="lock-note">'+icon('lock',13)+' Locked</div>')+
     '</div>';
   }
@@ -916,10 +923,9 @@
     if(taskForm) taskForm.addEventListener('submit', async function(e){
       e.preventDefault();
       var desc = document.getElementById('taskDesc').value.trim();
-      var mins = document.getElementById('taskMins').value;
       var errEl = document.getElementById('taskErr'); errEl.textContent='';
       var btn = taskForm.querySelector('button[type=submit]'); setBtnLoading(btn, true, false);
-      try{ state.myStatus = await runServer('addTask',[state.empToken, desc, mins]); render(); }
+      try{ state.myStatus = await runServer('addTask',[state.empToken, desc]); render(); }
       catch(err){ setBtnLoading(btn, false); errEl.textContent=(err&&err.message)||'Could not add task'; }
     });
     root.querySelectorAll('[data-edit-task]').forEach(function(b){ b.addEventListener('click', function(){ state.editingTaskId=b.getAttribute('data-edit-task'); render(); }); });
@@ -927,10 +933,9 @@
     root.querySelectorAll('[data-save-task]').forEach(function(b){ b.addEventListener('click', async function(){
       var id = b.getAttribute('data-save-task');
       var desc = document.getElementById('editDesc_'+id).value.trim();
-      var mins = document.getElementById('editMins_'+id).value;
       setBtnLoading(b, true, false);
       try{
-        await runServer('updateTask',[state.empToken, id, desc, mins]);
+        await runServer('updateTask',[state.empToken, id, desc]);
         state.editingTaskId=null;
         await refreshMyStatus();
         if(state.myHistory) await refreshMyHistory();
@@ -970,6 +975,10 @@
       if(state.mode==='employee' && state.myTab==='today' && state.myStatus && state.myStatus.activeShift){
         var el = document.getElementById('elapsedText');
         if(el) el.textContent = elapsedText(state.myStatus.activeShift.clockInTs);
+        document.querySelectorAll('[id^="taskDur_"]').forEach(function(td){
+          var start = Number(td.getAttribute('data-start'));
+          if(start) td.textContent = elapsedText(start) + ' · ongoing';
+        });
       }
     }, 30000);
   }
@@ -1072,7 +1081,7 @@
           '<div class="tile-name">'+escapeHtml(e.name)+'</div>';
         if(e.clockedIn){
           html += '<div class="tile-meta">'+icon('history',14)+' since '+formatTime(new Date(e.clockInTs))+'</div>';
-          html += '<div class="working-on">'+(e.currentTask? (icon('pencil',12)+' <b>'+escapeHtml(e.currentTask.description)+'</b> ('+e.currentTask.minutes+'m)') : 'No task logged yet')+'</div>';
+          html += '<div class="working-on">'+(e.currentTask? (icon('pencil',12)+' <b>'+escapeHtml(e.currentTask.description)+'</b> since '+formatTime(new Date(e.currentTask.startTs))) : 'No task logged yet')+'</div>';
         }
         html += '</div>';
       });
@@ -1102,7 +1111,7 @@
         var mins = Math.round(((s.clockOutTs||Date.now())-s.clockInTs)/60000);
         html += '<tr><td>'+escapeHtml(s.employeeName)+'</td><td>'+formatDateShort(s.date)+'</td><td class="num">'+formatTime(new Date(s.clockInTs))+'</td>'+
           '<td class="num">'+(s.clockOutTs? formatTime(new Date(s.clockOutTs)) : '—')+'</td><td class="num">'+hoursText(mins*60000)+'</td>'+
-          '<td>'+(s.tasks.length? escapeHtml(s.tasks.map(function(t){return t.description+' ('+t.minutes+'m)';}).join(', ')) : '—')+'</td>'+
+          '<td>'+(s.tasks.length? escapeHtml(s.tasks.map(function(t){return t.description+' ('+(t.ongoing?'ongoing':t.minutes+'m')+')';}).join(', ')) : '—')+'</td>'+
           '<td style="white-space:nowrap;"><button class="row-icon-btn" data-edit-adm-shift="'+s.id+'">'+icon('pencil',15)+'</button><button class="row-icon-btn" data-del-adm-shift="'+s.id+'">'+icon('trash',15)+'</button></td></tr>';
       });
     }
@@ -1217,10 +1226,9 @@
   function adminTaskRowHtml(t){
     if(state.editingTaskId===t.id){
       return '<div class="task-row"><input type="text" id="admEditDesc_'+t.id+'" value="'+escapeHtml(t.description)+'" style="flex:1; border:1px solid var(--line); border-radius:8px; padding:.4rem .6rem; background:var(--surface);">'+
-        '<input type="number" id="admEditMins_'+t.id+'" value="'+t.minutes+'" style="width:70px; border:1px solid var(--line); border-radius:8px; padding:.4rem .5rem; background:var(--surface);">'+
         '<div class="row-actions"><button class="row-icon-btn" data-adm-save-task="'+t.id+'">'+icon('check',16)+'</button><button class="row-icon-btn" data-adm-cancel-task="1">'+icon('arrowLeft',16)+'</button></div></div>';
     }
-    return '<div class="task-row"><div class="desc">'+escapeHtml(t.description)+'</div><div class="mins">'+t.minutes+' min</div>'+
+    return '<div class="task-row"><div class="desc">'+escapeHtml(t.description)+'</div><div class="mins">'+(t.ongoing? 'ongoing' : minutesText(t.minutes))+'</div>'+
       '<div class="row-actions"><button class="row-icon-btn" data-adm-edit-task="'+t.id+'">'+icon('pencil',15)+'</button><button class="row-icon-btn" data-adm-del-task="'+t.id+'">'+icon('trash',15)+'</button></div></div>';
   }
   function wireAdminTaskRow(shift, rerender){
@@ -1229,11 +1237,10 @@
     document.querySelectorAll('[data-adm-save-task]').forEach(function(b){ b.addEventListener('click', async function(){
       var id=b.getAttribute('data-adm-save-task');
       var desc=document.getElementById('admEditDesc_'+id).value.trim();
-      var mins=document.getElementById('admEditMins_'+id).value;
       setBtnLoading(b, true, false);
       try{
-        await runServer('adminUpdateTask',[state.adminToken, id, desc, mins]);
-        var t = shift.tasks.find(function(x){return x.id===id;}); if(t){ t.description=desc; t.minutes=Number(mins); }
+        await runServer('adminUpdateTask',[state.adminToken, id, desc]);
+        var t = shift.tasks.find(function(x){return x.id===id;}); if(t){ t.description=desc; }
         state.editingTaskId=null; rerender();
         await refreshLogs();
       } catch(err){ setBtnLoading(b, false); handleAuthError(err,'admin'); alert((err&&err.message)||'Could not save'); }
@@ -1255,7 +1262,7 @@
     state.logsRows.forEach(function(s){
       var mins = Math.round(((s.clockOutTs||Date.now())-s.clockInTs)/60000);
       if(s.tasks.length){
-        s.tasks.forEach(function(t){ rows.push([s.employeeName, s.date, formatTime(new Date(s.clockInTs)), s.clockOutTs?formatTime(new Date(s.clockOutTs)):'', hoursText(mins*60000), t.description, t.minutes]); });
+        s.tasks.forEach(function(t){ rows.push([s.employeeName, s.date, formatTime(new Date(s.clockInTs)), s.clockOutTs?formatTime(new Date(s.clockOutTs)):'', hoursText(mins*60000), t.description, (t.minutes==null?'ongoing':t.minutes)]); });
       } else {
         rows.push([s.employeeName, s.date, formatTime(new Date(s.clockInTs)), s.clockOutTs?formatTime(new Date(s.clockOutTs)):'', hoursText(mins*60000), '', '']);
       }
